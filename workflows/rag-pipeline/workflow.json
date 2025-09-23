@@ -1,0 +1,180 @@
+{
+  "name": "RAG Pipeline with Vector Search",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/query",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Query Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "embed",
+        "model": "text-embedding-3-small",
+        "text": "={{ $json.query }}"
+      },
+      "id": "openai-embed",
+      "name": "Generate Query Embedding",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "query",
+        "index": "knowledge-base",
+        "vector": "={{ $json.embedding }}",
+        "topK": 5,
+        "includeMetadata": true
+      },
+      "id": "pinecone-query",
+      "name": "Vector Search",
+      "type": "n8n-nodes-base.pinecone",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const contexts = items.map(item => item.json.text).join('\\n\\n');\nreturn [{ json: { context: contexts, query: $input.first().json.query } }];"
+      },
+      "id": "code-prepare",
+      "name": "Prepare Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a helpful assistant that answers questions based on the provided context. If the answer is not in the context, say so."
+          },
+          {
+            "role": "user",
+            "content": "Context:\\n{{ $json.context }}\\n\\nQuestion: {{ $json.query }}\\n\\nAnswer:"
+          }
+        ]
+      },
+      "id": "openai-chat",
+      "name": "Generate Response",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseData": "={{ JSON.stringify({ answer: $json.choices[0].message.content, sources: $('Vector Search').all().map(item => item.json.metadata) }) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-response",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Query Webhook": {
+      "main": [
+        [
+          {
+            "node": "Generate Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Vector Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vector Search": {
+      "main": [
+        [
+          {
+            "node": "Prepare Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Context": {
+      "main": [
+        [
+          {
+            "node": "Generate Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "versionId": "1.0.0",
+  "id": "rag-pipeline-vector-search",
+  "meta": {
+    "templateId": "rag-pipeline",
+    "templateVersion": "1.0.0",
+    "templateName": "RAG Pipeline with Vector Search",
+    "templateDescription": "Production-ready RAG implementation with vector search and context-aware responses"
+  },
+  "tags": [
+    {
+      "id": "ai",
+      "name": "AI"
+    },
+    {
+      "id": "rag",
+      "name": "RAG"
+    },
+    {
+      "id": "vector-search",
+      "name": "Vector Search"
+    }
+  ]
+}
