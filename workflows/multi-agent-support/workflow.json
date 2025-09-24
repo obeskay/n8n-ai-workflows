@@ -1,0 +1,303 @@
+{
+  "name": "Multi-Agent Customer Support System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/support-ticket",
+        "options": {}
+      },
+      "id": "ticket-webhook",
+      "name": "Support Ticket Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are an intent classification agent. Classify support tickets into: technical, billing, general, or escalation. Return only the category name."
+          },
+          {
+            "role": "user",
+            "content": "Classify this ticket: {{ $json.ticket_content }}"
+          }
+        ]
+      },
+      "id": "intent-classifier",
+      "name": "Intent Classification Agent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "operation": "equal"
+          }
+        },
+        "combineOperation": "any",
+        "options": {}
+      },
+      "id": "route-by-intent",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a technical support specialist. Provide detailed technical solutions for software, API, and integration issues. Include code examples when appropriate."
+          },
+          {
+            "role": "user",
+            "content": "Technical Issue: {{ $json.ticket_content }}\nUser Details: {{ $json.user_info }}"
+          }
+        ]
+      },
+      "id": "technical-agent",
+      "name": "Technical Support Agent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a billing support specialist. Handle subscription, payment, refund, and account-related inquiries with empathy and accuracy."
+          },
+          {
+            "role": "user",
+            "content": "Billing Issue: {{ $json.ticket_content }}\nAccount ID: {{ $json.account_id }}"
+          }
+        ]
+      },
+      "id": "billing-agent",
+      "name": "Billing Support Agent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a general support agent. Handle product questions, account setup, and general inquiries with helpful guidance."
+          },
+          {
+            "role": "user",
+            "content": "General Inquiry: {{ $json.ticket_content }}"
+          }
+        ]
+      },
+      "id": "general-agent",
+      "name": "General Support Agent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [800, 400]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Analyze the customer sentiment and urgency level. Rate urgency 1-5 and sentiment as positive, neutral, or negative."
+          },
+          {
+            "role": "user",
+            "content": "Analyze: {{ $json.ticket_content }}"
+          }
+        ]
+      },
+      "id": "sentiment-analyzer",
+      "name": "Sentiment Analysis Agent",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json.choices[0].message.content;\nconst sentiment = $('Sentiment Analysis Agent').first().json.choices[0].message.content;\nconst ticket_id = `TICKET-${Date.now()}`;\n\nreturn [{\n  json: {\n    ticket_id,\n    response,\n    sentiment_analysis: sentiment,\n    resolved_by: $node.name,\n    timestamp: new Date().toISOString(),\n    original_ticket: $input.first().json.ticket_content\n  }\n}];"
+      },
+      "id": "response-formatter",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseData": "={{ JSON.stringify($json) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-response",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    }
+  ],
+  "connections": {
+    "Support Ticket Webhook": {
+      "main": [
+        [
+          {
+            "node": "Intent Classification Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent Classification Agent": {
+      "main": [
+        [
+          {
+            "node": "Route by Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Intent": {
+      "main": [
+        [
+          {
+            "node": "Technical Support Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Billing Support Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "General Support Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Technical Support Agent": {
+      "main": [
+        [
+          {
+            "node": "Sentiment Analysis Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Billing Support Agent": {
+      "main": [
+        [
+          {
+            "node": "Sentiment Analysis Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "General Support Agent": {
+      "main": [
+        [
+          {
+            "node": "Sentiment Analysis Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sentiment Analysis Agent": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "versionId": "1.0.0",
+  "id": "multi-agent-support-system",
+  "meta": {
+    "templateId": "multi-agent-support",
+    "templateVersion": "1.0.0",
+    "templateName": "Multi-Agent Customer Support System",
+    "templateDescription": "Intelligent customer support automation with specialized agents for different inquiry types"
+  },
+  "tags": [
+    {
+      "id": "ai",
+      "name": "AI"
+    },
+    {
+      "id": "support",
+      "name": "Support"
+    },
+    {
+      "id": "multi-agent",
+      "name": "Multi-Agent"
+    }
+  ]
+}

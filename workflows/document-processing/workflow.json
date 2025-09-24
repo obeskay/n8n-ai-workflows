@@ -1,0 +1,393 @@
+{
+  "name": "Intelligent Document Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/document-upload",
+        "options": {}
+      },
+      "id": "document-webhook",
+      "name": "Document Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst fileInfo = {\n  filename: data.filename || 'unknown',\n  file_type: data.file_type || 'unknown',\n  file_size: data.file_size || 0,\n  upload_timestamp: new Date().toISOString(),\n  document_id: `DOC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,\n  content: data.content || data.file_content || '',\n  metadata: data.metadata || {}\n};\n\n// Basic file validation\nconst supportedTypes = ['pdf', 'docx', 'txt', 'png', 'jpg', 'jpeg'];\nconst fileExtension = fileInfo.filename.split('.').pop()?.toLowerCase();\nfileInfo.is_supported = supportedTypes.includes(fileExtension);\nfileInfo.requires_ocr = ['pdf', 'png', 'jpg', 'jpeg'].includes(fileExtension);\n\nreturn [{ json: fileInfo }];"
+      },
+      "id": "file-validator",
+      "name": "File Validator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "operation": "equal"
+          }
+        },
+        "combineOperation": "any",
+        "options": {}
+      },
+      "id": "processing-router",
+      "name": "Processing Type Router",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-vision-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are an OCR specialist. Extract all text content from the provided image/document. Return only the extracted text without any additional formatting or commentary."
+          },
+          {
+            "role": "user",
+            "content": "Extract text from this document: {{ $json.filename }}"
+          }
+        ]
+      },
+      "id": "ocr-processor",
+      "name": "OCR Text Extraction",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// For text-based documents, use existing content\nconst data = $input.first().json;\nreturn [{ json: { extracted_text: data.content, document_id: data.document_id } }];"
+      },
+      "id": "text-extractor",
+      "name": "Direct Text Extraction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [800, 300]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a document classification expert. Classify documents into categories: invoice, contract, resume, report, legal_document, technical_document, correspondence, or other. Also extract key entities like names, dates, amounts, companies. Return JSON format: {category: string, confidence: number, entities: object}"
+          },
+          {
+            "role": "user",
+            "content": "Classify and extract entities from this document:\n\n{{ $json.extracted_text || $json.content }}"
+          }
+        ]
+      },
+      "id": "document-classifier",
+      "name": "Document Classification",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1000, 250]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a compliance checker. Review documents for potential compliance issues, sensitive information, or red flags. Check for: PII data, financial information, legal compliance requirements, and potential security concerns. Return JSON format with compliance status and recommendations."
+          },
+          {
+            "role": "user",
+            "content": "Review this document for compliance:\n\nDocument Type: {{ $('Document Classification').first().json.choices[0].message.content }}\nContent: {{ $json.extracted_text || $json.content }}"
+          }
+        ]
+      },
+      "id": "compliance-checker",
+      "name": "Compliance Review",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1200, 250]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Generate a comprehensive summary of the document including key points, action items, important dates, and relevant stakeholders. Format as structured summary suitable for executive review."
+          },
+          {
+            "role": "user",
+            "content": "Summarize this document:\n\nClassification: {{ $('Document Classification').first().json.choices[0].message.content }}\nContent: {{ $json.extracted_text || $json.content }}"
+          }
+        ]
+      },
+      "id": "document-summarizer",
+      "name": "Document Summarizer",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1000, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalData = $input.first().json;\nconst classification = JSON.parse($('Document Classification').first().json.choices[0].message.content || '{}');\nconst compliance = JSON.parse($('Compliance Review').first().json.choices[0].message.content || '{}');\nconst summary = $('Document Summarizer').first().json.choices[0].message.content;\n\n// Determine storage location based on classification\nconst storageMapping = {\n  'invoice': '/documents/financial/invoices',\n  'contract': '/documents/legal/contracts',\n  'resume': '/documents/hr/resumes',\n  'report': '/documents/reports',\n  'legal_document': '/documents/legal/general',\n  'technical_document': '/documents/technical',\n  'correspondence': '/documents/correspondence',\n  'other': '/documents/general'\n};\n\nconst result = {\n  document_id: originalData.document_id,\n  filename: originalData.filename,\n  processing_timestamp: new Date().toISOString(),\n  classification: classification,\n  compliance_status: compliance,\n  summary: summary,\n  storage_location: storageMapping[classification.category] || storageMapping['other'],\n  processing_status: 'completed',\n  extracted_text: originalData.extracted_text || originalData.content,\n  metadata: {\n    file_type: originalData.file_type,\n    file_size: originalData.file_size,\n    upload_timestamp: originalData.upload_timestamp,\n    required_ocr: originalData.requires_ocr\n  },\n  next_actions: {\n    requires_human_review: compliance.requires_review || false,\n    auto_file: true,\n    send_notifications: classification.confidence > 0.8\n  }\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "result-processor",
+      "name": "Process Final Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "operation": "equal"
+          }
+        },
+        "combineOperation": "any",
+        "options": {}
+      },
+      "id": "filing-router",
+      "name": "Auto-Filing Router",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1600, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simulate auto-filing process\nconst data = $input.first().json;\nconst filingResult = {\n  filed: true,\n  location: data.storage_location,\n  timestamp: new Date().toISOString(),\n  document_id: data.document_id\n};\n\nreturn [{ json: { ...data, filing_result: filingResult } }];"
+      },
+      "id": "auto-filer",
+      "name": "Automated Filing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1800, 250]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Queue for human review\nconst data = $input.first().json;\nconst reviewQueue = {\n  queued_for_review: true,\n  review_reason: data.compliance_status.review_reason || 'Compliance check required',\n  priority: data.compliance_status.priority || 'normal',\n  assigned_to: 'compliance_team'\n};\n\nreturn [{ json: { ...data, review_queue: reviewQueue } }];"
+      },
+      "id": "review-queue",
+      "name": "Human Review Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1800, 350]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseData": "={{ JSON.stringify($json) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-response",
+      "name": "Send Processing Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2000, 300]
+    }
+  ],
+  "connections": {
+    "Document Upload Webhook": {
+      "main": [
+        [
+          {
+            "node": "File Validator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File Validator": {
+      "main": [
+        [
+          {
+            "node": "Processing Type Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Processing Type Router": {
+      "main": [
+        [
+          {
+            "node": "OCR Text Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Direct Text Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR Text Extraction": {
+      "main": [
+        [
+          {
+            "node": "Document Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Direct Text Extraction": {
+      "main": [
+        [
+          {
+            "node": "Document Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Classification": {
+      "main": [
+        [
+          {
+            "node": "Compliance Review",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Document Summarizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compliance Review": {
+      "main": [
+        [
+          {
+            "node": "Process Final Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Document Summarizer": {
+      "main": [
+        [
+          {
+            "node": "Process Final Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Final Results": {
+      "main": [
+        [
+          {
+            "node": "Auto-Filing Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto-Filing Router": {
+      "main": [
+        [
+          {
+            "node": "Automated Filing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Human Review Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automated Filing": {
+      "main": [
+        [
+          {
+            "node": "Send Processing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Human Review Queue": {
+      "main": [
+        [
+          {
+            "node": "Send Processing Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "versionId": "1.0.0",
+  "id": "intelligent-document-processing",
+  "meta": {
+    "templateId": "document-processing",
+    "templateVersion": "1.0.0",
+    "templateName": "Intelligent Document Processing",
+    "templateDescription": "Automated document ingestion with OCR, classification, compliance checking, and intelligent filing"
+  },
+  "tags": [
+    {
+      "id": "ai",
+      "name": "AI"
+    },
+    {
+      "id": "document-processing",
+      "name": "Document Processing"
+    },
+    {
+      "id": "ocr",
+      "name": "OCR"
+    },
+    {
+      "id": "compliance",
+      "name": "Compliance"
+    }
+  ]
+}

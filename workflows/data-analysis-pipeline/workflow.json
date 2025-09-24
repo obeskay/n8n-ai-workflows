@@ -1,0 +1,314 @@
+{
+  "name": "Real-Time Data Analysis Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/data-ingestion",
+        "options": {}
+      },
+      "id": "data-webhook",
+      "name": "Data Ingestion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst timestamp = new Date().toISOString();\n\n// Data validation and preprocessing\nconst processedData = {\n  ...data,\n  timestamp,\n  data_source: data.source || 'unknown',\n  metrics: data.metrics || {},\n  validated: true\n};\n\n// Check for anomalies\nconst metrics = data.metrics || {};\nconst anomalies = [];\n\n// Simple anomaly detection rules\nif (metrics.cpu_usage > 90) {\n  anomalies.push({ type: 'high_cpu', value: metrics.cpu_usage, threshold: 90 });\n}\nif (metrics.memory_usage > 85) {\n  anomalies.push({ type: 'high_memory', value: metrics.memory_usage, threshold: 85 });\n}\nif (metrics.error_rate > 0.05) {\n  anomalies.push({ type: 'high_error_rate', value: metrics.error_rate, threshold: 0.05 });\n}\n\nprocessedData.anomalies = anomalies;\nprocessedData.anomaly_detected = anomalies.length > 0;\n\nreturn [{ json: processedData }];"
+      },
+      "id": "data-preprocessor",
+      "name": "Data Preprocessor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [400, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "operation": "equal"
+          }
+        },
+        "combineOperation": "any",
+        "options": {}
+      },
+      "id": "anomaly-detector",
+      "name": "Anomaly Detection Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [600, 300]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a data analysis expert. Analyze the provided metrics and anomalies to generate insights, recommendations, and priority assessments. Focus on business impact and actionable recommendations."
+          },
+          {
+            "role": "user",
+            "content": "Analyze this data:\nMetrics: {{ JSON.stringify($json.metrics) }}\nAnomalies: {{ JSON.stringify($json.anomalies) }}\nSource: {{ $json.data_source }}\n\nProvide analysis, impact assessment, and recommendations."
+          }
+        ]
+      },
+      "id": "ai-analyzer",
+      "name": "AI Data Analyzer",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [800, 200]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Generate executive summary reports from data analysis. Create clear, actionable insights suitable for decision-makers. Include key metrics, trends, and recommendations."
+          },
+          {
+            "role": "user",
+            "content": "Create an executive report from this analysis:\n{{ $('AI Data Analyzer').first().json.choices[0].message.content }}\n\nOriginal Data: {{ JSON.stringify($json.metrics) }}\nAnomalies: {{ JSON.stringify($json.anomalies) }}"
+          }
+        ]
+      },
+      "id": "report-generator",
+      "name": "Executive Report Generator",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1000, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Store data in time-series format\nconst data = $input.first().json;\nconst timeSeries = {\n  timestamp: data.timestamp,\n  source: data.data_source,\n  metrics: data.metrics,\n  anomalies: data.anomalies\n};\n\nreturn [{ json: { stored: true, data: timeSeries } }];"
+      },
+      "id": "data-storage",
+      "name": "Time-Series Storage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [800, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "operation": "greaterThan"
+          }
+        },
+        "combineOperation": "any",
+        "options": {}
+      },
+      "id": "alert-trigger",
+      "name": "Alert Trigger",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1000, 400]
+    },
+    {
+      "parameters": {
+        "operation": "chat",
+        "model": "gpt-4-turbo-preview",
+        "messages": [
+          {
+            "role": "system",
+            "content": "Generate urgent alert messages for system anomalies. Include severity level, recommended actions, and escalation procedures."
+          },
+          {
+            "role": "user",
+            "content": "Generate alert for anomalies:\n{{ JSON.stringify($json.anomalies) }}\nMetrics: {{ JSON.stringify($json.metrics) }}\nSource: {{ $json.data_source }}"
+          }
+        ]
+      },
+      "id": "alert-generator",
+      "name": "Alert Generator",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [1200, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const analysis = $('AI Data Analyzer').first()?.json?.choices?.[0]?.message?.content || 'No analysis available';\nconst report = $('Executive Report Generator').first()?.json?.choices?.[0]?.message?.content || 'No report available';\nconst alerts = $('Alert Generator').first()?.json?.choices?.[0]?.message?.content || null;\nconst originalData = $input.first().json;\n\nconst result = {\n  analysis_id: `ANALYSIS-${Date.now()}`,\n  timestamp: originalData.timestamp,\n  data_source: originalData.data_source,\n  analysis: {\n    detailed_analysis: analysis,\n    executive_report: report,\n    alerts: alerts\n  },\n  metrics: originalData.metrics,\n  anomalies: originalData.anomalies,\n  recommendations: 'See detailed analysis for actionable recommendations',\n  status: originalData.anomaly_detected ? 'attention_required' : 'normal'\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "final-aggregator",
+      "name": "Final Result Aggregator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1400, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseData": "={{ JSON.stringify($json) }}",
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-response",
+      "name": "Send Analysis Results",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1600, 300]
+    }
+  ],
+  "connections": {
+    "Data Ingestion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Data Preprocessor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Preprocessor": {
+      "main": [
+        [
+          {
+            "node": "Anomaly Detection Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anomaly Detection Gate": {
+      "main": [
+        [
+          {
+            "node": "AI Data Analyzer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Time-Series Storage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Data Analyzer": {
+      "main": [
+        [
+          {
+            "node": "Executive Report Generator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Executive Report Generator": {
+      "main": [
+        [
+          {
+            "node": "Final Result Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Time-Series Storage": {
+      "main": [
+        [
+          {
+            "node": "Alert Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Trigger": {
+      "main": [
+        [
+          {
+            "node": "Alert Generator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Final Result Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Generator": {
+      "main": [
+        [
+          {
+            "node": "Final Result Aggregator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Result Aggregator": {
+      "main": [
+        [
+          {
+            "node": "Send Analysis Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "error-handler"
+  },
+  "versionId": "1.0.0",
+  "id": "real-time-data-analysis-pipeline",
+  "meta": {
+    "templateId": "data-analysis-pipeline",
+    "templateVersion": "1.0.0",
+    "templateName": "Real-Time Data Analysis Pipeline",
+    "templateDescription": "Automated data analysis with anomaly detection, AI insights, and executive reporting"
+  },
+  "tags": [
+    {
+      "id": "ai",
+      "name": "AI"
+    },
+    {
+      "id": "data-analysis",
+      "name": "Data Analysis"
+    },
+    {
+      "id": "real-time",
+      "name": "Real-Time"
+    },
+    {
+      "id": "monitoring",
+      "name": "Monitoring"
+    }
+  ]
+}
