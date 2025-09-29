@@ -1,0 +1,123 @@
+{
+    "name": "OpenRouter Chat API",
+    "nodes": [
+          {
+                  "id": "webhook-1",
+                  "name": "Webhook",
+                  "type": "n8n-nodes-base.webhook",
+                  "typeVersion": 2,
+                  "position": [250, 300],
+                  "parameters": {
+                            "path": "chat",
+                            "httpMethod": "POST",
+                            "responseMode": "responseNode",
+                            "options": {}
+                  }
+          },
+          {
+                  "id": "http-request-1",
+                  "name": "OpenRouter API",
+                  "type": "n8n-nodes-base.httpRequest",
+                  "typeVersion": 4.2,
+                  "position": [450, 300],
+                  "parameters": {
+                            "method": "POST",
+                            "url": "https://openrouter.ai/api/v1/chat/completions",
+                            "authentication": "genericCredentialType",
+                            "genericAuthType": "httpHeaderAuth",
+                            "sendHeaders": true,
+                            "headerParameters": {
+                                        "parameters": [
+                                                      {
+                                                                      "name": "HTTP-Referer",
+                                                                      "value": "https://n8n.cloud.obeskay.com"
+                                                      },
+                                                      {
+                                                                      "name": "X-Title",
+                                                                      "value": "n8n Workflow"
+                                                      }
+                                        ]
+                            },
+                            "sendBody": true,
+                            "specifyBody": "json",
+                            "jsonBody": "={\n  \"model\": \"{{ $json.model || 'openai/gpt-3.5-turbo' }}\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"{{ $json.message }}\"\n    }\n  ],\n  \"temperature\": {{ $json.temperature || 0.7 }},\n  \"max_tokens\": {{ $json.maxTokens || 1000 }}\n}",
+                            "options": {
+                                        "timeout": 30000
+                            }
+                  },
+                  "credentials": {
+                            "httpHeaderAuth": {
+                                        "id": "openrouter-api",
+                                        "name": "OpenRouter API"
+                            }
+                  }
+          },
+          {
+                  "id": "code-1",
+                  "name": "Format Response",
+                  "type": "n8n-nodes-base.code",
+                  "typeVersion": 2,
+                  "position": [650, 300],
+                  "parameters": {
+                            "mode": "runOnceForEachItem",
+                            "jsCode": "const response = $input.item.json;\n\nlet content = '';\nif (response.choices && response.choices[0]) {\n  content = response.choices[0].message.content;\n} else if (response.error) {\n  throw new Error(response.error.message || 'API Error');\n}\n\nreturn {\n  success: true,\n  response: content,\n  model: response.model || 'unknown',\n  usage: response.usage || {}\n};"
+                  }
+          },
+          {
+                  "id": "respond-1",
+                  "name": "Response",
+                  "type": "n8n-nodes-base.respondToWebhook",
+                  "typeVersion": 1,
+                  "position": [850, 300],
+                  "parameters": {
+                            "respondWith": "json",
+                            "responseBody": "={{ $json }}",
+                            "options": {
+                                        "responseCode": 200
+                            }
+                  }
+          }
+    ],
+    "connections": {
+          "Webhook": {
+                  "main": [
+                            [
+                                        {
+                                                      "node": "OpenRouter API",
+                                                      "type": "main",
+                                                      "index": 0
+                                        }
+                            ]
+                  ]
+          },
+          "OpenRouter API": {
+                  "main": [
+                            [
+                                        {
+                                                      "node": "Format Response",
+                                                      "type": "main",
+                                                      "index": 0
+                                        }
+                            ]
+                  ]
+          },
+          "Format Response": {
+                  "main": [
+                            [
+                                        {
+                                                      "node": "Response",
+                                                      "type": "main",
+                                                      "index": 0
+                                        }
+                            ]
+                  ]
+          }
+    },
+    "settings": {
+          "executionOrder": "v1",
+          "saveDataErrorExecution": "all",
+          "saveDataSuccessExecution": "all",
+          "saveExecutionProgress": true,
+          "saveManualExecutions": true
+    }
+}
