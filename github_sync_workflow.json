@@ -1,0 +1,136 @@
+{
+    "name": "GitHub Sync",
+    "nodes": [
+          {
+                  "id": "schedule-1",
+                  "name": "Every 6 Hours",
+                  "type": "n8n-nodes-base.scheduleTrigger",
+                  "typeVersion": 1.2,
+                  "position": [250, 200],
+                  "parameters": {
+                            "rule": {
+                                        "interval": [
+                                                      {
+                                                                      "field": "hours",
+                                                                      "hoursInterval": 6
+                                                      }
+                                        ]
+                            }
+                  }
+          },
+          {
+                  "id": "github-trigger-1",
+                  "name": "GitHub Events",
+                  "type": "n8n-nodes-base.githubTrigger",
+                  "typeVersion": 1,
+                  "position": [250, 350],
+                  "parameters": {
+                            "owner": "={{ $credentials.owner }}",
+                            "repository": "={{ $credentials.repository }}",
+                            "events": [
+                                        "push",
+                                        "pull_request.closed"
+                            ]
+                  },
+                  "credentials": {
+                            "githubApi": {
+                                        "id": "github-api",
+                                        "name": "GitHub API"
+                            }
+                  }
+          },
+          {
+                  "id": "fetch-workflows-1",
+                  "name": "Get Workflows",
+                  "type": "n8n-nodes-base.n8n",
+                  "typeVersion": 1,
+                  "position": [450, 275],
+                  "parameters": {
+                            "resource": "workflow",
+                            "operation": "getAll",
+                            "returnAll": true
+                  },
+                  "credentials": {
+                            "n8nApi": {
+                                        "id": "n8n-api",
+                                        "name": "n8n API"
+                            }
+                  }
+          },
+          {
+                  "id": "github-list-1",
+                  "name": "List GitHub Files",
+                  "type": "n8n-nodes-base.github",
+                  "typeVersion": 1,
+                  "position": [650, 275],
+                  "parameters": {
+                            "resource": "file",
+                            "operation": "list",
+                            "owner": "={{ $credentials.owner }}",
+                            "repository": "={{ $credentials.repository }}",
+                            "filePath": "workflows/"
+                  },
+                  "credentials": {
+                            "githubApi": {
+                                        "id": "github-api",
+                                        "name": "GitHub API"
+                            }
+                  }
+          },
+          {
+                  "id": "compare-1",
+                  "name": "Compare",
+                  "type": "n8n-nodes-base.code",
+                  "typeVersion": 2,
+                  "position": [850, 275],
+                  "parameters": {
+                            "mode": "runOnceForAllItems",
+                            "jsCode": "const n8nWorkflows = $node['Get Workflows'].json;\nconst githubFiles = $node['List GitHub Files'].json;\n\nconst toSync = [];\n\nn8nWorkflows.forEach(wf => {\n  const githubFile = githubFiles.find(f => f.name === `${wf.id}.json`);\n  if (!githubFile || new Date(wf.updatedAt) > new Date(githubFile.updated_at)) {\n    toSync.push({\n      action: 'update_github',\n      workflowId: wf.id,\n      workflowName: wf.name,\n      data: wf\n    });\n  }\n});\n\nreturn { toSync, count: toSync.length };"
+                  }
+          },
+          {
+                  "id": "github-update-1",
+                  "name": "Update GitHub",
+                  "type": "n8n-nodes-base.github",
+                  "typeVersion": 1,
+                  "position": [1050, 275],
+                  "parameters": {
+                            "resource": "file",
+                            "operation": "edit",
+                            "owner": "={{ $credentials.owner }}",
+                            "repository": "={{ $credentials.repository }}",
+                            "filePath": "workflows/{{ $json.workflowId }}.json",
+                            "fileContent": "={{ JSON.stringify($json.data, null, 2) }}",
+                            "commitMessage": "sync: {{ $json.workflowName }}"
+                  },
+                  "credentials": {
+                            "githubApi": {
+                                        "id": "github-api",
+                                        "name": "GitHub API"
+                            }
+                  }
+          }
+    ],
+    "connections": {
+          "Every 6 Hours": {
+                  "main": [[{ "node": "Get Workflows", "type": "main", "index": 0 }]]
+          },
+          "GitHub Events": {
+                  "main": [[{ "node": "Get Workflows", "type": "main", "index": 0 }]]
+          },
+          "Get Workflows": {
+                  "main": [[{ "node": "List GitHub Files", "type": "main", "index": 0 }]]
+          },
+          "List GitHub Files": {
+                  "main": [[{ "node": "Compare", "type": "main", "index": 0 }]]
+          },
+          "Compare": {
+                  "main": [[{ "node": "Update GitHub", "type": "main", "index": 0 }]]
+          }
+    },
+    "settings": {
+          "executionOrder": "v1",
+          "saveDataErrorExecution": "all",
+          "saveDataSuccessExecution": "all"
+    }
+}
